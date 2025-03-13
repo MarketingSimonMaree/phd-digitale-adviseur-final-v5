@@ -59,7 +59,7 @@ export default function BackgroundVideo({ isVisible }: Props) {
       onTimeUpdate={handleTimeUpdate}
       style={{ display: isVisible ? "block" : "none" }}
     >
-      <source src="https://cdn.shopify.com/videos/c/o/v/e298230f87434d79a14598b1c41d0cb4.mp4" type="video/mp4" />
+      <source src="https://cdn.shopify.com/videos/c/o/v/70c5bfee62be4a388513895e88bc8203.mp4" type="video/mp4" />
     </video>
   );
 } 

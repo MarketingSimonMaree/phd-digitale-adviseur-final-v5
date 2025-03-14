@@ -632,41 +632,6 @@ export default function InteractiveAvatar({ children }: Props) {
               />
             )}
             
-            {/* Mode selection */}
-            {stream && (
-              <div className="absolute bottom-24 left-4 flex gap-2">
-                <Button
-                  className={`flex items-center justify-center gap-2 h-10 transition-all ${
-                    chatMode === "text_mode" 
-                      ? "bg-[#ce861b] text-white w-24"
-                      : "bg-white/80 text-gray-700 hover:bg-white/90 backdrop-blur-sm w-10"
-                  }`}
-                  onClick={() => stream ? handleModeChange("text_mode") : handleDisabledClick()}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M4 5h16v10H4z" />
-                    <path d="M8 15v2m4-2v2m4-2v2" />
-                    <path d="M7 9h2m2 0h2m2 0h2" />
-                  </svg>
-                  {chatMode === "text_mode" && <span>Typen</span>}
-                </Button>
-                <Button
-                  className={`flex items-center justify-center gap-2 h-10 transition-all ${
-                    chatMode === "voice_mode" 
-                      ? "bg-[#ce861b] text-white w-24"
-                      : "bg-white/80 text-gray-700 hover:bg-white/90 backdrop-blur-sm w-10"
-                  }`}
-                  onClick={() => stream ? handleModeChange("voice_mode") : handleDisabledClick()}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
-                  </svg>
-                  {chatMode === "voice_mode" && <span>Spreken</span>}
-                </Button>
-              </div>
-            )}
-            
             {/* Text input */}
             {stream && (
               <div className="absolute bottom-0 left-0 right-0 p-4">
@@ -701,25 +666,6 @@ export default function InteractiveAvatar({ children }: Props) {
                       </div>
                     )}
                   </div>
-                  
-                  {/* Voice indicator */}
-                  {stream && (
-                    <button
-                      onClick={() => handleModeChange(chatMode === "voice_mode" ? "text_mode" : "voice_mode")}
-                      className={`p-3 rounded-full transition-colors shadow-lg ${
-                        chatMode === "voice_mode" 
-                          ? "bg-amber-500 hover:bg-amber-600" 
-                          : "bg-gray-500 hover:bg-gray-600"
-                      }`}
-                      title={chatMode === "voice_mode" ? "Schakel over naar typen" : "Activeer microfoon"}
-                    >
-                      {chatMode === "voice_mode" ? (
-                        <Mic className="h-6 w-6 text-white" />
-                      ) : (
-                        <MicOff className="h-6 w-6 text-white" />
-                      )}
-                    </button>
-                  )}
                 </div>
               </div>
             )}

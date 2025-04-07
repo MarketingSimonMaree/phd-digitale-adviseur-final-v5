@@ -19,12 +19,20 @@ import ChatMessages from './ChatMessages';
 import BackgroundVideo from './BackgroundVideo';
 import { logSession, logMessage, endSession as logEndSession } from '../utils/sessionLogger'
 
-// Voeg dit toe aan het begin van het bestand, na de imports
-if (!window.kiosk) {
+// Voeg deze interface toe aan het begin van het bestand
+interface CustomWindow extends Window {
+  kiosk?: {
+    activityTracking: (enabled: boolean) => void;
+  }
+}
+
+declare let window: CustomWindow;
+
+// De kiosk check
+if (typeof window !== 'undefined' && !window.kiosk) {
   window.kiosk = {
     activityTracking: function(enabled: boolean) {
       // Deze functie doet niets in een normale browser
-      console.log('Kiosk activity tracking:', enabled);
     }
   };
 }
@@ -115,25 +123,9 @@ export default function InteractiveAvatar({ children }: Props) {
   async function startSession() {
     setIsLoadingSession(true);
     try {
-      window.kiosk.activityTracking(false);
-
       const newToken = await fetchAccessToken();
-
-      // Check microphone access first
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-      } catch (error) {
-        console.error("Microphone access denied:", error);
-        setDebug("Microphone access denied. Check browser settings.");
-        throw new Error("Microphone access denied");
-      }
-
-      // Create new StreamingAvatar instance with proper config
       avatar.current = new StreamingAvatar({
         token: newToken
-        // Only include the token as this is the only valid property
-        // in StreamingAvatarApiConfig according to the type definition
       });
 
       // Add event listeners for avatar feedback
@@ -203,15 +195,18 @@ export default function InteractiveAvatar({ children }: Props) {
         }
       }, 100);
       
-      // Start met microfoon gemute
+      // Wacht even en zet de microfoon uit bij start
       setTimeout(() => {
-        // Gebruik dezelfde code als in toggleMicrophone om de mic te muten
-        if (avatar.current && avatar.current.mediaStreamAudioSource) {
-          const audioTracks = avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            audioTracks[0].enabled = false; // Start met microfoon uit
-            console.log('Microfoon uitgezet bij start');
+        try {
+          if (avatar.current?.mediaStreamAudioSource) {
+            const audioTracks = avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
+            if (audioTracks.length > 0) {
+              audioTracks[0].enabled = false; // Start met microfoon uit
+              console.log('Microfoon uitgezet bij start');
+            }
           }
+        } catch (error) {
+          console.error("Error setting initial mic state:", error);
         }
       }, 1000);
       
@@ -591,7 +586,7 @@ export default function InteractiveAvatar({ children }: Props) {
   // Update de toggle functie
   const toggleMicrophone = async () => {
     try {
-      if (avatar.current && avatar.current.mediaStreamAudioSource) {
+      if (avatar.current?.mediaStreamAudioSource) {
         const audioTracks = avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
         if (audioTracks.length > 0) {
           audioTracks[0].enabled = isMicMuted; // Toggle de mic status

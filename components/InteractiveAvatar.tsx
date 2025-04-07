@@ -19,24 +19,6 @@ import ChatMessages from './ChatMessages';
 import BackgroundVideo from './BackgroundVideo';
 import { logSession, logMessage, endSession as logEndSession } from '../utils/sessionLogger'
 
-// Voeg deze interface toe aan het begin van het bestand
-interface CustomWindow extends Window {
-  kiosk?: {
-    activityTracking: (enabled: boolean) => void;
-  }
-}
-
-declare let window: CustomWindow;
-
-// De kiosk check
-if (typeof window !== 'undefined' && !window.kiosk) {
-  window.kiosk = {
-    activityTracking: function(enabled: boolean) {
-      // Deze functie doet niets in een normale browser
-    }
-  };
-}
-
 // Constants
 const AVATAR_ID = '00e7b435191b4dcc85936073262b9aa8';
 const KNOWLEDGE_BASE_ID = '6a065e56b4a74f7a884d8323e10ceb90';
@@ -66,7 +48,6 @@ export default function InteractiveAvatar({ children }: Props) {
   const [showToast, setShowToast] = useState<boolean>(false);
   const [showThumbnail, setShowThumbnail] = useState(false);
   const [session_id, setSessionId] = useState<string>();
-  const [isMicMuted, setIsMicMuted] = useState(true);
   
   // Refs
   const mediaStream = useRef<HTMLVideoElement>(null);
@@ -79,7 +60,6 @@ export default function InteractiveAvatar({ children }: Props) {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [hasPlayedWithSound, setHasPlayedWithSound] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const audioStreamRef = useRef<MediaStream | null>(null);
 
   // Video loop patroon configuratie
   const audioLoops = 1;    // Aantal loops met geluid aan
@@ -124,8 +104,22 @@ export default function InteractiveAvatar({ children }: Props) {
     setIsLoadingSession(true);
     try {
       const newToken = await fetchAccessToken();
+
+      // Check microphone access first
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+      } catch (error) {
+        console.error("Microphone access denied:", error);
+        setDebug("Microphone access denied. Check browser settings.");
+        throw new Error("Microphone access denied");
+      }
+
+      // Create new StreamingAvatar instance with proper config
       avatar.current = new StreamingAvatar({
         token: newToken
+        // Only include the token as this is the only valid property
+        // in StreamingAvatarApiConfig according to the type definition
       });
 
       // Add event listeners for avatar feedback
@@ -194,21 +188,6 @@ export default function InteractiveAvatar({ children }: Props) {
           setDebug(`Voice chat error: ${error instanceof Error ? error.message : String(error)}`);
         }
       }, 100);
-      
-      // Wacht even en zet de microfoon uit bij start
-      setTimeout(() => {
-        try {
-          if (avatar.current?.mediaStreamAudioSource) {
-            const audioTracks = avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
-            if (audioTracks.length > 0) {
-              audioTracks[0].enabled = false; // Start met microfoon uit
-              console.log('Microfoon uitgezet bij start');
-            }
-          }
-        } catch (error) {
-          console.error("Error setting initial mic state:", error);
-        }
-      }, 1000);
       
     } catch (error) {
       console.error("Error starting avatar session:", error);
@@ -364,8 +343,6 @@ export default function InteractiveAvatar({ children }: Props) {
   // End the session according to API reference
   async function endSession() {
     try {
-      window.kiosk.activityTracking(true);
-
       // Log sessie einde naar Supabase
       if (session_id) {
         await logEndSession(session_id);
@@ -583,25 +560,6 @@ export default function InteractiveAvatar({ children }: Props) {
     };
   }, [session_id]);
 
-  // Update de toggle functie
-  const toggleMicrophone = async () => {
-    try {
-      if (avatar.current?.mediaStreamAudioSource) {
-        const audioTracks = avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
-        if (audioTracks.length > 0) {
-          audioTracks[0].enabled = isMicMuted; // Toggle de mic status
-          setIsMicMuted(!isMicMuted);
-          console.log('Microfoon status gewijzigd naar:', !isMicMuted ? 'uit' : 'aan');
-        }
-      } else {
-        console.log('Geen audio tracks gevonden');
-      }
-    } catch (error) {
-      console.error('Microfoon toggle error:', error);
-      setDebug(`Microfoon error: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
   return (
     <div className="console-container relative w-full h-full">
       <div className="absolute inset-0 w-full h-full bg-gray-100">
@@ -659,19 +617,6 @@ export default function InteractiveAvatar({ children }: Props) {
                          animate-scale-pulse hover:bg-amber-500 transition-colors"
             >
               Start gesprek
-            </button>
-          </div>
-        )}
-
-        {/* Test mute knop in het midden */}
-        {stream && (
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50">
-            <button
-              onClick={toggleMicrophone}
-              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-            >
-              {isMicMuted ? <MicOff size={20} /> : <Mic size={20} />}
-              {isMicMuted ? 'Microfoon Aan' : 'Microfoon Uit'}
             </button>
           </div>
         )}

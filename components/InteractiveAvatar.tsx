@@ -248,64 +248,83 @@ export default function InteractiveAvatar({ children }: Props) {
       console.log("User is silent");
     });
     
-    // USER_TALKING_MESSAGE: Voor alle user input (spraak én tekst)
-    avatar.current.on(StreamingEvents.USER_TALKING_MESSAGE, (event: any) => {
-      console.log('User message event:', event);
-      
-      if (event.detail?.message) {
-        // Voor de UI
-        const shouldProcess = micEnabled.current || chatMode === 'text_mode';
-        
-        if (chatMode === 'voice_mode') {
-          // Voor voice mode: Toon het bericht altijd in de UI
-          setMessages(prev => [...prev, {
-            text: event.detail.message,
-            sender: 'user',
-            ignored: !shouldProcess // Markeer als genegeerd indien mic uit
-          }]);
-          
-          // BELANGRIJK: Manipuleer hier de HeyGen internals om het doorsturen te voorkomen
-          if (!shouldProcess) {
-            console.log("Microfoon UIT: Bericht wordt niet verwerkt:", event.detail.message);
-            
-            // Door het interrupt direct aan te roepen, voorkomen we dat de avatar reageert
-            if (avatar.current) {
-              try {
-                avatar.current.interrupt();
-              } catch (err) {
-                console.error("Interrupt error:", err);
-              }
-            }
-            
-            return; // Stop hier om te voorkomen dat we naar Supabase loggen
-          }
-        } else {
-          // Voor getypte tekst: check op duplicaten
-          setMessages(prev => {
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage?.sender === 'user' && 
-                lastMessage?.text === event.detail.message) {
-              return prev;
-            }
-            return [...prev, {
-              text: event.detail.message,
-              sender: 'user'
-            }];
-          });
-        }
+    // Vervang je USER_TALKING_MESSAGE eventhandler met deze versie:
 
-        // Alleen naar Supabase loggen als de microfoon aan staat of in textmode
-        if (shouldProcess) {
-          // Log het bericht naar Supabase
-          if (session_id) {
-            logMessage(session_id, {
-              sender: 'user',
-              message: event.detail.message
-            });
-          }
+avatar.current.on(StreamingEvents.USER_TALKING_MESSAGE, async (event: any) => {
+  console.log('User message event:', event);
+  
+  if (event.detail?.message) {
+    // Check eerst of het een spraakbericht is in voice mode
+    const isVoiceMessage = chatMode === 'voice_mode';
+    
+    // Als het een spraakbericht is en de microfoon staat uit, negeer volledig
+    if (isVoiceMessage && !isMicrophoneEnabled) {
+      console.log("Microfoon UIT: Spraakbericht volledig genegeerd:", event.detail.message);
+      
+      // Onderbreek het gesprek om te voorkomen dat de avatar reageert
+      try {
+        if (avatar.current) {
+          await avatar.current.interrupt();
         }
+      } catch (err) {
+        console.error("Interrupt error:", err);
       }
-    });
+      
+      return; // Stop hier, voeg niet toe aan UI en log niet naar Supabase
+    }
+    
+    // Voor normale berichten of als microfoon aan staat
+    if (chatMode === 'text_mode' || (isVoiceMessage && isMicrophoneEnabled)) {
+      // Voeg bericht toe aan UI
+      if (chatMode === 'text_mode') {
+        // Voor getypte tekst: check op duplicaten
+        setMessages(prev => {
+          const lastMessage = prev[prev.length - 1];
+          if (lastMessage?.sender === 'user' && 
+              lastMessage?.text === event.detail.message) {
+            return prev;
+          }
+          return [...prev, {
+            text: event.detail.message,
+            sender: 'user'
+          }];
+        });
+      } else {
+        // Voor spraakberichten
+        setMessages(prev => [...prev, {
+          text: event.detail.message,
+          sender: 'user'
+        }]);
+      }
+
+      // Log naar Supabase
+      if (session_id) {
+        logMessage(session_id, {
+          sender: 'user',
+          message: event.detail.message
+        });
+      }
+    }
+  }
+});
+
+// Verbeterde toggleMicrophone functie:
+const toggleMicrophone = (): void => {
+  const newStatus = !isMicrophoneEnabled;
+  setIsMicrophoneEnabled(newStatus);
+  
+  // Toon een duidelijke melding
+  setDebug(newStatus 
+    ? "Microfoon AAN: Je spraak wordt verwerkt" 
+    : "Microfoon UIT: Je spraak wordt niet verwerkt"
+  );
+  
+  setTimeout(() => {
+    setDebug("");
+  }, 3000);
+  
+  console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
+};
 
     // AVATAR_TALKING_MESSAGE: Voor avatar responses met zin-buffering
     avatar.current.on(StreamingEvents.AVATAR_TALKING_MESSAGE, (event: any) => {

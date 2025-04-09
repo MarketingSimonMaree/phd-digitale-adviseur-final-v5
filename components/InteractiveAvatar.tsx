@@ -32,6 +32,7 @@ interface Props {
 interface Message {
   text: string;
   sender: 'user' | 'avatar';
+  ignored?: boolean; // Flag voor genegeerde berichten
 }
 
 export default function InteractiveAvatar({ children }: Props) {
@@ -49,7 +50,6 @@ export default function InteractiveAvatar({ children }: Props) {
   const [showThumbnail, setShowThumbnail] = useState<boolean>(false);
   const [session_id, setSessionId] = useState<string | undefined>();
   const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState<boolean>(false);
-  const [processMicInput, setProcessMicInput] = useState<boolean>(false);
   
   // Refs
   const mediaStream = useRef<HTMLVideoElement>(null);
@@ -62,6 +62,11 @@ export default function InteractiveAvatar({ children }: Props) {
   const [audioEnabled, setAudioEnabled] = useState<boolean>(true);
   const [hasPlayedWithSound, setHasPlayedWithSound] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  
+  // Flag om bij te houden of voice chat is gestart
+  const voiceChatStarted = useRef<boolean>(false);
+  // Microfoon Status
+  const micEnabled = useRef<boolean>(false);
 
   // Video loop patroon configuratie
   const audioLoops = 1;    // Aantal loops met geluid aan
@@ -168,15 +173,21 @@ export default function InteractiveAvatar({ children }: Props) {
       // Set default mode to text
       setChatMode("text_mode");
       
-      // Start voice chat met microfoon op mute
+      // Start voice chat open, maar noteer dat hij niet actief is
       setTimeout(async () => {
         try {
           if (avatar.current) {
             await (avatar.current as any).startVoiceChat({
               useSilencePrompt: true,
-              silenceTimeout: 5000,
-              isInputAudioMuted: true // Zet de microfoon standaard op mute
+              silenceTimeout: 5000, 
+              isInputAudioMuted: false // We houden de microfoon altijd open voor herkenning
             });
+            
+            // Markeer dat voice chat is gestart
+            voiceChatStarted.current = true;
+            // Standaard staat de microfoon uit (voor wat betreft verwerking)
+            micEnabled.current = false;
+            setIsMicrophoneEnabled(false);
           }
         } catch (error) {
           console.error("Error starting voice chat:", error);
@@ -184,9 +195,6 @@ export default function InteractiveAvatar({ children }: Props) {
         }
       }, 100);
 
-      // Zet de microfoonstatus op gemute
-      setIsMicrophoneEnabled(false); // Update de status naar mute
-      setProcessMicInput(false); // Geen berichten verwerken
     } catch (error) {
       console.error("Error starting avatar session:", error);
       setDebug(`Session error: ${error instanceof Error ? error.message : String(error)}`);
@@ -245,12 +253,32 @@ export default function InteractiveAvatar({ children }: Props) {
       console.log('User message event:', event);
       
       if (event.detail?.message) {
-        // Voor de UI: altijd berichten tonen, ongeacht microfoon status
+        // Voor de UI
+        const shouldProcess = micEnabled.current || chatMode === 'text_mode';
+        
         if (chatMode === 'voice_mode') {
+          // Voor voice mode: Toon het bericht altijd in de UI
           setMessages(prev => [...prev, {
             text: event.detail.message,
-            sender: 'user'
+            sender: 'user',
+            ignored: !shouldProcess // Markeer als genegeerd indien mic uit
           }]);
+          
+          // BELANGRIJK: Manipuleer hier de HeyGen internals om het doorsturen te voorkomen
+          if (!shouldProcess) {
+            console.log("Microfoon UIT: Bericht wordt niet verwerkt:", event.detail.message);
+            
+            // Door het interrupt direct aan te roepen, voorkomen we dat de avatar reageert
+            if (avatar.current) {
+              try {
+                avatar.current.interrupt();
+              } catch (err) {
+                console.error("Interrupt error:", err);
+              }
+            }
+            
+            return; // Stop hier om te voorkomen dat we naar Supabase loggen
+          }
         } else {
           // Voor getypte tekst: check op duplicaten
           setMessages(prev => {
@@ -266,8 +294,8 @@ export default function InteractiveAvatar({ children }: Props) {
           });
         }
 
-        // Alleen naar Supabase loggen en verwerken als microfoon aan staat of textmode
-        if (processMicInput || chatMode === 'text_mode') {
+        // Alleen naar Supabase loggen als de microfoon aan staat of in textmode
+        if (shouldProcess) {
           // Log het bericht naar Supabase
           if (session_id) {
             logMessage(session_id, {
@@ -275,8 +303,6 @@ export default function InteractiveAvatar({ children }: Props) {
               message: event.detail.message
             });
           }
-        } else {
-          console.log("Bericht niet verwerkt omdat microfoon uit staat:", event.detail.message);
         }
       }
     });
@@ -311,24 +337,14 @@ export default function InteractiveAvatar({ children }: Props) {
       }
     });
 
-    // Interrupt handler
-    const handleInterrupt = async () => {
-      if (avatar.current) {
-        try {
-          await avatar.current.interrupt();
-        } catch (error) {
-          console.error('Interrupt error:', error);
-        }
-      }
-    };
-
     // Voice chat configuratie met snelle reactie
     if (chatMode === 'voice_mode') {
       try {
         avatar.current.startVoiceChat({
           useSilencePrompt: true,
-          isInputAudioMuted: !processMicInput // Mute gebaseerd op processMicInput state
+          isInputAudioMuted: false // We houden audio open voor detectie, maar blokkeren reacties
         });
+        voiceChatStarted.current = true;
       } catch (error) {
         if (!(error instanceof Error && error.message.includes("WebSocket"))) {
           console.error("Voice chat error:", error);
@@ -347,9 +363,10 @@ export default function InteractiveAvatar({ children }: Props) {
       }
 
       if (avatar.current) {
-        if (chatMode === "voice_mode") {
+        if (voiceChatStarted.current) {
           try {
             await (avatar.current as any).closeVoiceChat();
+            voiceChatStarted.current = false;
           } catch (error) {
             console.error("Error closing voice chat:", error);
           }
@@ -366,6 +383,7 @@ export default function InteractiveAvatar({ children }: Props) {
       setText("");
       setIsUserTalking(false);
       messageBuffer.current = '';
+      micEnabled.current = false;
     } catch (error) {
       console.error("Error ending session:", error);
       setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
@@ -411,22 +429,28 @@ export default function InteractiveAvatar({ children }: Props) {
 
     try {
       if (newMode === 'voice_mode') {
-        await (avatar.current as any).startVoiceChat({
-          useSilencePrompt: true,
-          silenceTimeout: 100,        // Verlaagd naar 1 seconde
-          silenceThreshold: -50,       // Gevoeliger silence detection
-          isInputAudioMuted: !processMicInput, // Gebaseerd op processMicInput state
-          onStartSpeaking: () => {
-            console.log('User started speaking');
-            setIsUserTalking(true);
-          },
-          onStopSpeaking: () => {
-            console.log('User stopped speaking');
-            setIsUserTalking(false);
-          }
-        });
+        if (!voiceChatStarted.current) {
+          await (avatar.current as any).startVoiceChat({
+            useSilencePrompt: true,
+            silenceTimeout: 100,
+            silenceThreshold: -50,
+            isInputAudioMuted: false, // We houden audio open voor detectie
+            onStartSpeaking: () => {
+              console.log('User started speaking');
+              setIsUserTalking(true);
+            },
+            onStopSpeaking: () => {
+              console.log('User stopped speaking');
+              setIsUserTalking(false);
+            }
+          });
+          voiceChatStarted.current = true;
+        }
       } else {
-        await (avatar.current as any).closeVoiceChat();
+        if (voiceChatStarted.current) {
+          await (avatar.current as any).closeVoiceChat();
+          voiceChatStarted.current = false;
+        }
       }
       
       setChatMode(newMode);
@@ -558,38 +582,50 @@ export default function InteractiveAvatar({ children }: Props) {
     };
   }, [session_id]);
 
-  // Functie om de microfoon in/uit te schakelen
-  const toggleMicrophone = async (): Promise<void> => {
-    if (avatar.current) {
-      try {
-        // Verander de status
-        const newStatus = !isMicrophoneEnabled;
-        
-        // Gebruik de correcte SDK methode om audio input te schakelen
-        if (chatMode === 'voice_mode') {
-          await (avatar.current as any).startVoiceChat({
-            useSilencePrompt: true,
-            silenceTimeout: 5000,
-            isInputAudioMuted: !newStatus // Omgekeerde logica: als status true is, moet muting false zijn
-          });
-        }
+  // Functie om de microfoon in/uit te schakelen - NIEUWE AANPAK
+  const toggleMicrophone = (): void => {
+    // Verander alleen de interne state zonder de streams te manipuleren
+    const newStatus = !isMicrophoneEnabled;
+    
+    // Update interne refs
+    micEnabled.current = newStatus;
+    setIsMicrophoneEnabled(newStatus);
+    
+    // Toon een bericht aan de gebruiker
+    setDebug(newStatus ? 
+      "Microfoon AAN: Je berichten worden verwerkt" : 
+      "Microfoon UIT: Je berichten worden NIET verwerkt"
+    );
+    
+    // Clear de debug message na 3 seconden
+    setTimeout(() => {
+      setDebug("");
+    }, 3000);
+    
+    console.log("Microfoon status gewijzigd:", newStatus ? "AAN" : "UIT");
+  };
 
-        // Toon een bericht aan de gebruiker
-        setDebug(newStatus ? "Microfoon AAN: Je berichten worden verwerkt" : "Microfoon UIT: Je berichten worden niet verwerkt");
-        
-        // Clear de debug message na 3 seconden
-        setTimeout(() => {
-          setDebug("");
-        }, 3000);
-        
-        // Update alle states
-        setIsMicrophoneEnabled(newStatus);
-        setProcessMicInput(newStatus);
-      } catch (error) {
-        console.error("Error toggling microphone:", error);
-        setDebug(`Microphone toggle error: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
+  // Render gekleurde berichten op basis van status
+  const renderMessage = (message: Message, index: number) => {
+    const messageClass = message.sender === 'user' 
+      ? (message.ignored ? 'bg-gray-100 text-gray-500' : 'bg-blue-100') 
+      : 'bg-amber-100';
+      
+    return (
+      <div 
+        key={index}
+        className={`p-3 rounded-lg ${messageClass} max-w-[80%] ${
+          message.sender === 'user' ? 'ml-auto' : 'mr-auto'
+        }`}
+      >
+        {message.text}
+        {message.ignored && (
+          <div className="text-xs text-gray-500 mt-1">
+            (microfoon was uit)
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -670,11 +706,9 @@ export default function InteractiveAvatar({ children }: Props) {
         <div className="mt-auto centered-container">
           <div className="space-y-4 p-6">
             {stream && messages.length > 0 && (
-              <ChatMessages 
-                messages={messages} 
-                onClear={handleClear} 
-                session_id={session_id} 
-              />
+              <div className="flex flex-col space-y-3 overflow-y-auto max-h-[50vh]">
+                {messages.map((message, index) => renderMessage(message, index))}
+              </div>
             )}
             
             {/* Text input */}

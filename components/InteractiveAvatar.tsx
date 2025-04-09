@@ -558,7 +558,7 @@ export default function InteractiveAvatar({ children }: Props) {
   }, [session_id]);
 
   // Functie om de microfoon in/uit te schakelen
-  const const toggleMicrophone = async (): Promise<void> => {
+  const toggleMicrophone = async (): Promise<void> => {
   if (!avatar.current) return;
   
   // Toggle de state direct voor onmiddellijke UI feedback

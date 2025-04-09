@@ -48,7 +48,6 @@ export default function InteractiveAvatar({ children }: Props) {
   const [showToast, setShowToast] = useState<boolean>(false);
   const [showThumbnail, setShowThumbnail] = useState(false);
   const [session_id, setSessionId] = useState<string>();
-  const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState<boolean>(false);
   
   // Refs
   const mediaStream = useRef<HTMLVideoElement>(null);
@@ -119,28 +118,34 @@ export default function InteractiveAvatar({ children }: Props) {
       // Create new StreamingAvatar instance with proper config
       avatar.current = new StreamingAvatar({
         token: newToken
+        // Only include the token as this is the only valid property
+        // in StreamingAvatarApiConfig according to the type definition
       });
 
       // Add event listeners for avatar feedback
       setupAvatarEventListeners();
 
-      // Mount the avatar
+      // Mount the avatar - use type assertion if method exists but isn't in type definition
       if (mediaStream.current && avatar.current) {
+        // The SDK might have evolved and the types might not be up to date
+        // We'll need to check the actual API implementation
         if (typeof (avatar.current as any).mount === 'function') {
           (avatar.current as any).mount(mediaStream.current);
         }
+        
+        // Similarly for start method
         if (typeof (avatar.current as any).start === 'function') {
           (avatar.current as any).start();
         }
       }
 
-      // Start the avatar with minimal configuration
+      // Start the avatar with minimal configuration to satisfy type checking
       const res = await (avatar.current as any).createStartAvatar({
         quality: AvatarQuality.High,
         avatarName: AVATAR_ID,
         knowledgeId: KNOWLEDGE_BASE_ID,
         language: LANGUAGE,
-        disableIdleTimeout: true
+        disableIdleTimeout: true  // Using camelCase as per TypeScript convention
       });
       
       // Log de nieuwe sessie
@@ -152,14 +157,15 @@ export default function InteractiveAvatar({ children }: Props) {
         setStream(avatar.current.mediaStream);
       }
 
-      // Welkomstbericht
+      // Send welcome message with proper request format
       setTimeout(() => {
         if (avatar.current) {
+          // Welkomstbericht alleen afspelen, niet toevoegen aan messages
           (avatar.current as any).speak({
             text: "Hoi",
             taskType: TaskType.TALK,
             taskMode: TaskMode.SYNC,
-            skipMessage: true
+            skipMessage: true  // Custom flag om aan te geven dat dit bericht niet in chat moet
           });
         }
       }, 1000);
@@ -167,13 +173,13 @@ export default function InteractiveAvatar({ children }: Props) {
       // Set default mode to text
       setChatMode("text_mode");
       
-      // Start voice chat met microfoon standaard aan
+      // Wacht even en start dan voice chat
       setTimeout(async () => {
         try {
           if (avatar.current) {
             await (avatar.current as any).startVoiceChat({
-              useSilencePrompt: true,
-              silenceTimeout: 5000,
+              useSilencePrompt: true,  // Gewijzigd naar true
+              silenceTimeout: 5000,    // Optioneel: 5 seconden stilte timeout
               isInputAudioMuted: false
             });
           }
@@ -182,9 +188,7 @@ export default function InteractiveAvatar({ children }: Props) {
           setDebug(`Voice chat error: ${error instanceof Error ? error.message : String(error)}`);
         }
       }, 100);
-
-      // Zet de microfoonstatus op uit
-      setIsMicrophoneEnabled(false);
+      
     } catch (error) {
       console.error("Error starting avatar session:", error);
       setDebug(`Session error: ${error instanceof Error ? error.message : String(error)}`);
@@ -241,42 +245,40 @@ export default function InteractiveAvatar({ children }: Props) {
     // USER_TALKING_MESSAGE: Voor alle user input (spraak én tekst)
     avatar.current.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
       console.log('User message event:', event);
-      
       if (event.detail?.message) {
-        // Voor de UI: berichten alleen tonen als in text mode of als microfoon aan staat
-        if (chatMode === 'text_mode' || isMicrophoneEnabled) {
-          // Check of het spraak of tekst is
-          if (chatMode === 'voice_mode') {
-            // Voor spraak: voeg het bericht toe
-            setMessages(prev => [...prev, {
+        if (chatMode === 'voice_mode') {
+          // Voor spraak: voeg het bericht twee keer toe
+          setMessages(prev => [...prev, 
+            {
               text: event.detail.message,
               sender: 'user'
-            }]);
-          } else {
-            // Voor getypte tekst: check op duplicaten
-            setMessages(prev => {
-              const lastMessage = prev[prev.length - 1];
-              if (lastMessage?.sender === 'user' && 
-                  lastMessage?.text === event.detail.message) {
-                return prev;
-              }
-              return [...prev, {
-                text: event.detail.message,
-                sender: 'user'
-              }];
-            });
-          }
-
-          // Log het bericht naar Supabase alleen als het getoond wordt
-          if (session_id) {
-            logMessage(session_id, {
-              sender: 'user',
-              message: event.detail.message
-            });
-          }
+            },
+            {
+              text: event.detail.message,
+              sender: 'user'
+            }
+          ]);
         } else {
-          // Als we hier komen, dan is het een voice message maar microfoon staat uit
-          console.log("Genegeerd spraakbericht (microfoon uit):", event.detail.message);
+          // Voor getypte tekst: check op duplicaten
+          setMessages(prev => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage?.sender === 'user' && 
+                lastMessage?.text === event.detail.message) {
+              return prev;
+            }
+            return [...prev, {
+              text: event.detail.message,
+              sender: 'user'
+            }];
+          });
+        }
+
+        // Log het bericht naar Supabase
+        if (session_id) {
+          logMessage(session_id, {
+            sender: 'user',
+            message: event.detail.message
+          });
         }
       }
     });
@@ -310,6 +312,17 @@ export default function InteractiveAvatar({ children }: Props) {
         }
       }
     });
+
+    // Interrupt handler
+    const handleInterrupt = async () => {
+      if (avatar.current) {
+        try {
+          await avatar.current.interrupt();
+        } catch (error) {
+          console.error('Interrupt error:', error);
+        }
+      }
+    };
 
     // Voice chat configuratie met snelle reactie
     if (chatMode === 'voice_mode') {
@@ -355,9 +368,6 @@ export default function InteractiveAvatar({ children }: Props) {
       setText("");
       setIsUserTalking(false);
       messageBuffer.current = '';
-      
-      // Reset de microfoon status
-      setIsMicrophoneEnabled(false);
     } catch (error) {
       console.error("Error ending session:", error);
       setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
@@ -405,8 +415,8 @@ export default function InteractiveAvatar({ children }: Props) {
       if (newMode === 'voice_mode') {
         await (avatar.current as any).startVoiceChat({
           useSilencePrompt: true,
-          silenceTimeout: 100,
-          silenceThreshold: -50,
+          silenceTimeout: 100,        // Verlaagd naar 1 seconde
+          silenceThreshold: -50,       // Gevoeliger silence detection
           isInputAudioMuted: false,
           onStartSpeaking: () => {
             console.log('User started speaking');
@@ -523,8 +533,8 @@ export default function InteractiveAvatar({ children }: Props) {
   const handleClear = useCallback(async () => {
     if (session_id) {
       console.log('Clearing chat and ending session:', session_id);
-      await endSession();
-      console.log('Session ended');
+      const result = await endSession();
+      console.log('Session end result:', result);
       setSessionId(undefined);
     }
     setMessages([]);
@@ -549,26 +559,6 @@ export default function InteractiveAvatar({ children }: Props) {
       }
     };
   }, [session_id]);
-
-  // Functie om de microfoon in/uit te schakelen - Eenvoudige toggle
-  const toggleMicrophone = (): void => {
-    // Toggle de state direct 
-    const newStatus = !isMicrophoneEnabled;
-    setIsMicrophoneEnabled(newStatus);
-    
-    // UI feedback - toon een melding
-    setDebug(newStatus 
-      ? "Microfoon AAN: De digitale adviseur luistert naar je spraak" 
-      : "Microfoon UIT: De digitale adviseur negeert je spraak"
-    );
-    
-    // Verberg feedback na enkele seconden
-    setTimeout(() => {
-      setDebug("");
-    }, 3000);
-    
-    console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
-  };
 
   return (
     <div className="console-container relative w-full h-full">
@@ -631,21 +621,6 @@ export default function InteractiveAvatar({ children }: Props) {
           </div>
         )}
 
-        {/* Microfoon aan/uit knop */}
-        {stream && (
-          <div className="absolute top-6 left-6 z-10">
-            <button
-              onClick={toggleMicrophone}
-              className={`w-10 h-10 rounded-full flex items-center justify-center ${isMicrophoneEnabled ? 'bg-green-500' : 'bg-red-500'} text-white transition-colors group relative`}
-            >
-              {isMicrophoneEnabled ? <Mic size={18} /> : <MicOff size={18} />}
-              <span className="absolute left-full ml-2 whitespace-nowrap bg-black/75 text-white px-3 py-1 rounded text-sm opacity-0 group-hover:opacity-100 transition-opacity">
-                {isMicrophoneEnabled ? 'Zet microfoon uit' : 'Zet microfoon aan'}
-              </span>
-            </button>
-          </div>
-        )}
-
         {/* Chat messages */}
         <div className="mt-auto centered-container">
           <div className="space-y-4 p-6">
@@ -700,8 +675,8 @@ export default function InteractiveAvatar({ children }: Props) {
 
       {/* Debug info */}
       {debug && (
-        <div className="absolute bottom-28 left-4 right-4 bg-amber-100 border border-amber-300 text-amber-800 p-2 rounded text-sm text-center">
-          {debug}
+        <div className="absolute bottom-28 left-4 right-4 bg-red-100 border border-red-300 text-red-800 p-2 rounded text-sm">
+          <strong>Debug:</strong> {debug}
         </div>
       )}
 

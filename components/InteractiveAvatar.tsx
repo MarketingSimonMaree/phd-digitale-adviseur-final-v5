@@ -14,7 +14,7 @@ import {
 } from "@nextui-org/react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useMemoizedFn } from "ahooks";
-import { Mic, MicOff, Send, X } from "lucide-react";
+import { Mic, MicOff, Send, X, Square } from "lucide-react";
 import ChatMessages from './ChatMessages';
 import BackgroundVideo from './BackgroundVideo';
 import { logSession, logMessage, endSession as logEndSession } from '../utils/sessionLogger'
@@ -99,6 +99,25 @@ export default function InteractiveAvatar({ children }: Props) {
     }
     return "";
   }
+
+  // Functie om de avatar te onderbreken tijdens het spreken
+  const handleInterrupt = async (): Promise<void> => {
+    if (!avatar.current) return;
+    
+    try {
+      console.log("Avatar wordt onderbroken...");
+      await avatar.current.interrupt();
+      console.log("Avatar succesvol onderbroken");
+      
+      // Toon een kort bericht aan de gebruiker
+      setDebug("Spraak onderbroken");
+      setTimeout(() => {
+        setDebug("");
+      }, 1500);
+    } catch (error) {
+      console.error("Error interrupting avatar:", error);
+    }
+  };
 
   // Start avatar session
   async function startSession(): Promise<void> {
@@ -284,6 +303,15 @@ export default function InteractiveAvatar({ children }: Props) {
           // Als we hier komen, dan is het een voice message maar microfoon staat uit
           // Dit zouden we niet moeten zien volgens HeyGen docs omdat isInputAudioMuted true is
           console.log("Genegeerd spraakbericht (microfoon uit):", event.detail.message);
+          
+          // Als de microfoon uit staat, onderbreek dan de avatar om te voorkomen dat hij reageert
+          if (!isMicrophoneEnabled && avatar.current) {
+            try {
+              avatar.current.interrupt();
+            } catch (err) {
+              console.error("Interrupt error:", err);
+            }
+          }
         }
       }
     });
@@ -336,42 +364,42 @@ export default function InteractiveAvatar({ children }: Props) {
 
   // End the session according to API reference
   async function endSession(): Promise<void> {
-  try {
-    // Log sessie einde naar Supabase
-    if (session_id) {
-      await logEndSession(session_id);
-    }
+    try {
+      // Log sessie einde naar Supabase
+      if (session_id) {
+        await logEndSession(session_id);
+      }
 
-    if (avatar.current) {
-      if (chatMode === "voice_mode") {
-        try {
-          await (avatar.current as any).closeVoiceChat();
-        } catch (error) {
-          console.error("Error closing voice chat:", error);
+      if (avatar.current) {
+        if (chatMode === "voice_mode") {
+          try {
+            await (avatar.current as any).closeVoiceChat();
+          } catch (error) {
+            console.error("Error closing voice chat:", error);
+          }
         }
+        
+        await (avatar.current as any).stopAvatar();
+        avatar.current = null;
       }
       
-      await (avatar.current as any).stopAvatar();
+      // Reset states
+      setStream(null);
+      setMessages([]);
+      setChatMode("text_mode");
+      setText("");
+      setIsUserTalking(false);
+      messageBuffer.current = '';
+      
+      // BELANGRIJK: Reset de microfoon status naar UIT
+      setIsMicrophoneEnabled(false);
+    } catch (error) {
+      console.error("Error ending session:", error);
+      setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
       avatar.current = null;
+      setStream(null);
     }
-    
-    // Reset states
-    setStream(null);
-    setMessages([]);
-    setChatMode("text_mode");
-    setText("");
-    setIsUserTalking(false);
-    messageBuffer.current = '';
-    
-    // BELANGRIJK: Reset de microfoon status naar UIT
-    setIsMicrophoneEnabled(false);
-  } catch (error) {
-    console.error("Error ending session:", error);
-    setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
-    avatar.current = null;
-    setStream(null);
   }
-}
 
   // Send message to avatar
   async function handleSpeak(): Promise<void> {
@@ -559,48 +587,53 @@ export default function InteractiveAvatar({ children }: Props) {
 
   // Functie om de microfoon in/uit te schakelen
   const toggleMicrophone = async (): Promise<void> => {
-  if (!avatar.current) return;
-  
-  // Toggle de state direct voor onmiddellijke UI feedback
-  const newStatus = !isMicrophoneEnabled;
-  setIsMicrophoneEnabled(newStatus);
-  
-  try {
-    // Geef feedback aan de gebruiker
-    setDebug(newStatus 
-      ? "Microfoon AAN: De digitale adviseur luistert naar je spraak" 
-      : "Microfoon UIT: De digitale adviseur hoort je spraak niet"
-    );
+    if (!avatar.current) return;
     
-    // Clear feedback na enkele seconden
-    setTimeout(() => {
-      setDebug("");
-    }, 3000);
+    // Toggle de state direct voor onmiddellijke UI feedback
+    const newStatus = !isMicrophoneEnabled;
+    setIsMicrophoneEnabled(newStatus);
     
-    console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
-    
-    // Als we in voice_mode zijn, pas dan alleen de interne flag aan
-    // Dit vermijdt een volledige restart van de voice chat voor betere performance
-    if (chatMode === 'voice_mode') {
-      // Interne variabele gebruiken om te bepalen of berichten worden verwerkt
-      // Dit hoeft niet de zware startVoiceChat aan te roepen
-      if (avatar.current.mediaStreamAudioSource && 
-          avatar.current.mediaStreamAudioSource.mediaStream) {
-        const audioTracks = 
-          avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
-        
-        if (audioTracks && audioTracks.length > 0) {
-          // Enable/disable het audio track
-          audioTracks[0].enabled = newStatus;
-          console.log("Audio track enabled:", newStatus);
+    try {
+      // Als de microfoon uitgezet wordt, onderbreek dan de avatar
+      if (!newStatus) {
+        await handleInterrupt();
+      }
+      
+      // Geef feedback aan de gebruiker
+      setDebug(newStatus 
+        ? "Microfoon AAN: De digitale adviseur luistert naar je spraak" 
+        : "Microfoon UIT: De digitale adviseur hoort je spraak niet"
+      );
+      
+      // Clear feedback na enkele seconden
+      setTimeout(() => {
+        setDebug("");
+      }, 3000);
+      
+      console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
+      
+      // Als we in voice_mode zijn, pas dan alleen de interne flag aan
+      // Dit vermijdt een volledige restart van de voice chat voor betere performance
+      if (chatMode === 'voice_mode') {
+        // Interne variabele gebruiken om te bepalen of berichten worden verwerkt
+        // Dit hoeft niet de zware startVoiceChat aan te roepen
+        if (avatar.current.mediaStreamAudioSource && 
+            avatar.current.mediaStreamAudioSource.mediaStream) {
+          const audioTracks = 
+            avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
+          
+          if (audioTracks && audioTracks.length > 0) {
+            // Enable/disable het audio track
+            audioTracks[0].enabled = newStatus;
+            console.log("Audio track enabled:", newStatus);
+          }
         }
       }
+    } catch (error) {
+      console.error("Error toggling microphone:", error);
+      setDebug(`Fout bij microfoon schakelen: ${error instanceof Error ? error.message : String(error)}`);
     }
-  } catch (error) {
-    console.error("Error toggling microphone:", error);
-    setDebug(`Fout bij microfoon schakelen: ${error instanceof Error ? error.message : String(error)}`);
-  }
-};
+  };
 
   return (
     <div className="console-container relative w-full h-full">
@@ -675,6 +708,21 @@ export default function InteractiveAvatar({ children }: Props) {
             </span>
           </button>
         </div>
+
+        {/* Interrupt knop */}
+        {stream && (
+          <div className="absolute top-6 left-20 z-10">
+            <button
+              onClick={handleInterrupt}
+              className="w-10 h-10 rounded-full flex items-center justify-center bg-yellow-500 text-white transition-colors group relative hover:bg-yellow-600"
+            >
+              <Square size={18} />
+              <span className="absolute left-full ml-2 whitespace-nowrap bg-black/75 text-white px-3 py-1 rounded text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                Onderbreek spraak
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* Chat messages */}
         <div className="mt-auto centered-container">

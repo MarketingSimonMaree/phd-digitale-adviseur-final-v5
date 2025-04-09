@@ -336,39 +336,42 @@ export default function InteractiveAvatar({ children }: Props) {
 
   // End the session according to API reference
   async function endSession(): Promise<void> {
-    try {
-      // Log sessie einde naar Supabase
-      if (session_id) {
-        await logEndSession(session_id);
-      }
+  try {
+    // Log sessie einde naar Supabase
+    if (session_id) {
+      await logEndSession(session_id);
+    }
 
-      if (avatar.current) {
-        if (chatMode === "voice_mode") {
-          try {
-            await (avatar.current as any).closeVoiceChat();
-          } catch (error) {
-            console.error("Error closing voice chat:", error);
-          }
+    if (avatar.current) {
+      if (chatMode === "voice_mode") {
+        try {
+          await (avatar.current as any).closeVoiceChat();
+        } catch (error) {
+          console.error("Error closing voice chat:", error);
         }
-        
-        await (avatar.current as any).stopAvatar();
-        avatar.current = null;
       }
       
-      // Reset states
-      setStream(null);
-      setMessages([]);
-      setChatMode("text_mode");
-      setText("");
-      setIsUserTalking(false);
-      messageBuffer.current = '';
-    } catch (error) {
-      console.error("Error ending session:", error);
-      setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
+      await (avatar.current as any).stopAvatar();
       avatar.current = null;
-      setStream(null);
     }
+    
+    // Reset states
+    setStream(null);
+    setMessages([]);
+    setChatMode("text_mode");
+    setText("");
+    setIsUserTalking(false);
+    messageBuffer.current = '';
+    
+    // BELANGRIJK: Reset de microfoon status naar UIT
+    setIsMicrophoneEnabled(false);
+  } catch (error) {
+    console.error("Error ending session:", error);
+    setDebug(`End session error: ${error instanceof Error ? error.message : String(error)}`);
+    avatar.current = null;
+    setStream(null);
   }
+}
 
   // Send message to avatar
   async function handleSpeak(): Promise<void> {
@@ -555,41 +558,49 @@ export default function InteractiveAvatar({ children }: Props) {
   }, [session_id]);
 
   // Functie om de microfoon in/uit te schakelen
-  const toggleMicrophone = async (): Promise<void> => {
-    if (!avatar.current) return;
+  const const toggleMicrophone = async (): Promise<void> => {
+  if (!avatar.current) return;
+  
+  // Toggle de state direct voor onmiddellijke UI feedback
+  const newStatus = !isMicrophoneEnabled;
+  setIsMicrophoneEnabled(newStatus);
+  
+  try {
+    // Geef feedback aan de gebruiker
+    setDebug(newStatus 
+      ? "Microfoon AAN: De digitale adviseur luistert naar je spraak" 
+      : "Microfoon UIT: De digitale adviseur hoort je spraak niet"
+    );
     
-    try {
-      // Toggle de state
-      const newStatus = !isMicrophoneEnabled;
-      
-      // Gebruik de officiële isInputAudioMuted parameter om audio input uit te schakelen
-      await (avatar.current as any).startVoiceChat({
-        useSilencePrompt: true,
-        silenceTimeout: 5000,
-        isInputAudioMuted: !newStatus // Als newStatus = true, dan willen we isInputAudioMuted = false
-      });
-      
-      // Update state alleen na succesvolle API-call
-      setIsMicrophoneEnabled(newStatus);
-      
-      // Geef feedback aan de gebruiker
-      setDebug(newStatus 
-        ? "Microfoon AAN: De digitale adviseur luistert naar je spraak" 
-        : "Microfoon UIT: De digitale adviseur hoort je spraak niet"
-      );
-      
-      // Clear feedback na enkele seconden
-      setTimeout(() => {
-        setDebug("");
-      }, 3000);
-      
-      console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
-      console.log("isInputAudioMuted ingesteld op:", !newStatus);
-    } catch (error) {
-      console.error("Error toggling microphone:", error);
-      setDebug(`Fout bij microfoon schakelen: ${error instanceof Error ? error.message : String(error)}`);
+    // Clear feedback na enkele seconden
+    setTimeout(() => {
+      setDebug("");
+    }, 3000);
+    
+    console.log("Microfoon status gewijzigd naar:", newStatus ? "AAN" : "UIT");
+    
+    // Als we in voice_mode zijn, pas dan alleen de interne flag aan
+    // Dit vermijdt een volledige restart van de voice chat voor betere performance
+    if (chatMode === 'voice_mode') {
+      // Interne variabele gebruiken om te bepalen of berichten worden verwerkt
+      // Dit hoeft niet de zware startVoiceChat aan te roepen
+      if (avatar.current.mediaStreamAudioSource && 
+          avatar.current.mediaStreamAudioSource.mediaStream) {
+        const audioTracks = 
+          avatar.current.mediaStreamAudioSource.mediaStream.getAudioTracks();
+        
+        if (audioTracks && audioTracks.length > 0) {
+          // Enable/disable het audio track
+          audioTracks[0].enabled = newStatus;
+          console.log("Audio track enabled:", newStatus);
+        }
+      }
     }
-  };
+  } catch (error) {
+    console.error("Error toggling microphone:", error);
+    setDebug(`Fout bij microfoon schakelen: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
 
   return (
     <div className="console-container relative w-full h-full">
